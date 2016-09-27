@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"mime"
 	"net/http"
@@ -16,8 +15,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/goamz/goamz/aws"
-	"github.com/goamz/goamz/s3"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
 )
 
 func main() {
@@ -26,12 +26,12 @@ func main() {
 	}
 	localFolder := os.Args[1]
 	var output interface {
-		PutReader(key string, r io.Reader, contentType string) error
+		PutReader(key string, r io.ReadSeeker, contentType string) error
 	}
-	auth, _ := aws.GetAuth("", "", "", time.Time{})
 	if bucket := os.Getenv("S3_BUCKET"); bucket != "" {
-		s3bucket := s3.New(auth, aws.APSoutheast2).Bucket(bucket)
-		output = &S3Output{s3bucket, ""}
+		sess := session.New()
+		s3Client := s3.New(sess, nil)
+		output = &S3Output{s3Client, bucket, ""}
 	} else if netstorageHost := os.Getenv("NETSTORAGE_HOST"); netstorageHost != "" {
 		output = &NetstorageOutput{
 			Host:              netstorageHost,
@@ -97,7 +97,7 @@ func (o *NetstorageOutput) auth(r *http.Request, id string, filename string, uni
 	r.Header.Set("X-Akamai-ACS-Auth-Sign", base64.StdEncoding.EncodeToString(hash.Sum(nil)))
 }
 
-func (o *NetstorageOutput) PutReader(key string, r io.Reader, contentType string) error {
+func (o *NetstorageOutput) PutReader(key string, r io.ReadSeeker, contentType string) error {
 	filename := path.Join(o.Folder, o.Prefix, key)
 	req, err := http.NewRequest("PUT", fmt.Sprintf("http://%s/%s", o.Host, filename), r)
 	if err != nil {
@@ -140,7 +140,8 @@ func (o *NetstorageOutput) Delete(key string) error {
 // An s3Output implements Output to a provided s3 bucket with the provided
 // prefix.
 type S3Output struct {
-	Bucket *s3.Bucket
+	Client *s3.S3
+	Bucket string
 	Prefix string
 }
 
@@ -149,16 +150,17 @@ func (o *S3Output) SetPrefix(key string) {
 }
 
 func (o *S3Output) URLFor(p string) string {
-	return fmt.Sprintf("http://%s/%s.json", o.Bucket.Name, path.Join(o.Prefix, p))
+	return fmt.Sprintf("http://%s/%s.json", o.Bucket, path.Join(o.Prefix, p))
 }
 
-func (o *S3Output) PutReader(key string, r io.Reader, contentType string) error {
-	data, err := ioutil.ReadAll(r)
-	if err != nil {
-		return err
-	}
+func (o *S3Output) PutReader(key string, r io.ReadSeeker, contentType string) error {
 	filename := path.Join(o.Prefix, key)
-	if err := o.Bucket.Put(filename, data, contentType, s3.PublicRead, s3.Options{}); err != nil {
+	if _, err := o.Client.PutObject(&s3.PutObjectInput{
+		Bucket:      aws.String(o.Bucket),
+		Key:         aws.String(filename),
+		Body:        r,
+		ContentType: aws.String(contentType),
+	}); err != nil {
 		return err
 	}
 	log.Printf("output: put %s", filename)
@@ -167,7 +169,10 @@ func (o *S3Output) PutReader(key string, r io.Reader, contentType string) error 
 
 func (o *S3Output) Delete(key string) error {
 	filename := path.Join(o.Prefix, key)
-	if err := o.Bucket.Del(filename); err != nil {
+	if _, err := o.Client.DeleteObject(&s3.DeleteObjectInput{
+		Bucket: aws.String(o.Bucket),
+		Key:    aws.String(filename),
+	}); err != nil {
 		return err
 	}
 	log.Printf("output: delete %s", filename)
