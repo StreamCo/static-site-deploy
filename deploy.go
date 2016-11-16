@@ -160,6 +160,7 @@ func (o *S3Output) PutReader(key string, r io.ReadSeeker, contentType string) er
 		Key:         aws.String(filename),
 		Body:        r,
 		ContentType: aws.String(contentType),
+		ACL:         aws.String("public-read"),
 	}); err != nil {
 		return err
 	}
