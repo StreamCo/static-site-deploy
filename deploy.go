@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -20,28 +21,50 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 )
 
+type output interface {
+	PutReader(key string, r io.ReadSeeker, contentType string) error
+}
+
+func deploy(localFolder, path string, remote output) error {
+	key, err := filepath.Rel(localFolder, path)
+	if err != nil {
+		return err
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := remote.PutReader(key, f, mime.TypeByExtension(filepath.Ext(key))+"; charset=utf-8"); err != nil {
+		return err
+	}
+	return nil
+}
+
 func main() {
 	if len(os.Args) <= 1 {
 		log.Fatal("Usage: static-site-deploy <localFolder>")
 	}
 	localFolder := os.Args[1]
-	var output interface {
-		PutReader(key string, r io.ReadSeeker, contentType string) error
-	}
+	var remote output
 	if bucket := os.Getenv("S3_BUCKET"); bucket != "" {
 		sess := session.New()
 		s3Client := s3.New(sess, nil)
-		output = &S3Output{s3Client, bucket, ""}
+		remote = &S3Output{s3Client, bucket, ""}
 	} else if netstorageHost := os.Getenv("NETSTORAGE_HOST"); netstorageHost != "" {
-		output = &NetstorageOutput{
+		remote = &NetstorageOutput{
 			Host:              netstorageHost,
 			Folder:            os.Getenv("NETSTORAGE_FOLDER"),
 			NetstorageKeyName: os.Getenv("NETSTORAGE_UPLOAD_KEY_NAME"),
 			NetstorageSecret:  os.Getenv("NETSTORAGE_UPLOAD_SECRET"),
 		}
 	} else {
-		log.Fatal("Either a netstorage or s3 output should be configured in the env.")
+		log.Fatal("Either a netstorage or s3 remote should be configured in the env.")
 	}
+	var (
+		htmlFiles  []string
+		otherFiles []string
+	)
 	if err := filepath.Walk(localFolder, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -49,21 +72,25 @@ func main() {
 		if info.IsDir() {
 			return nil
 		}
-		key, err := filepath.Rel(localFolder, path)
-		if err != nil {
-			return err
-		}
-		f, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		if err := output.PutReader(key, f, mime.TypeByExtension(filepath.Ext(key))+"; charset=utf-8"); err != nil {
-			return err
+		if strings.HasSuffix(path, ".html") {
+			htmlFiles = append(htmlFiles, path)
+		} else {
+			otherFiles = append(otherFiles, path)
 		}
 		return nil
 	}); err != nil {
 		log.Fatal(err)
+	}
+
+	for _, path := range otherFiles {
+		if err := deploy(localFolder, path, remote); err != nil {
+			log.Fatal(err)
+		}
+	}
+	for _, path := range htmlFiles {
+		if err := deploy(localFolder, path, remote); err != nil {
+			log.Fatal(err)
+		}
 	}
 }
 
