@@ -10,6 +10,9 @@ Deploy a static site to s3 or Akamai netstorage, controlled by env variables.
 
 To publish to an S3 bucket, set `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `S3_BUCKET`.
 
+If you want your objects to be publicly readable, set `S3_ACL` to `public-read`
+(the default setting just uses the bucket ACL).
+
 IAM credentials are also supported.
 
 To publish to a Netstorage endpoint, set the following, e.g.:

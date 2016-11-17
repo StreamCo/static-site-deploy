@@ -50,7 +50,7 @@ func main() {
 	if bucket := os.Getenv("S3_BUCKET"); bucket != "" {
 		sess := session.New()
 		s3Client := s3.New(sess, nil)
-		remote = &S3Output{s3Client, bucket, ""}
+		remote = &S3Output{s3Client, bucket, "", os.Getenv("S3_ACL")}
 	} else if netstorageHost := os.Getenv("NETSTORAGE_HOST"); netstorageHost != "" {
 		remote = &NetstorageOutput{
 			Host:              netstorageHost,
@@ -170,6 +170,7 @@ type S3Output struct {
 	Client *s3.S3
 	Bucket string
 	Prefix string
+	ACL    string
 }
 
 func (o *S3Output) SetPrefix(key string) {
@@ -182,13 +183,16 @@ func (o *S3Output) URLFor(p string) string {
 
 func (o *S3Output) PutReader(key string, r io.ReadSeeker, contentType string) error {
 	filename := path.Join(o.Prefix, key)
-	if _, err := o.Client.PutObject(&s3.PutObjectInput{
+	in := &s3.PutObjectInput{
 		Bucket:      aws.String(o.Bucket),
 		Key:         aws.String(filename),
 		Body:        r,
 		ContentType: aws.String(contentType),
-		ACL:         aws.String("public-read"),
-	}); err != nil {
+	}
+	if o.ACL != "" {
+		in.ACL = aws.String(o.ACL)
+	}
+	if _, err := o.Client.PutObject(in); err != nil {
 		return err
 	}
 	log.Printf("output: put %s", filename)
