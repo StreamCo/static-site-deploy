@@ -84,12 +84,18 @@ func main() {
 
 	for _, path := range otherFiles {
 		if err := deploy(localFolder, path, remote); err != nil {
-			log.Fatal(err)
+			log.Printf("RETRYING after the following: %s", err)
+			if err := deploy(localFolder, path, remote); err != nil {
+				log.Fatal(err)
+			}
 		}
 	}
 	for _, path := range htmlFiles {
 		if err := deploy(localFolder, path, remote); err != nil {
-			log.Fatal(err)
+			log.Printf("RETRYING after the following: %s", err)
+			if err := deploy(localFolder, path, remote); err != nil {
+				log.Fatal(err)
+			}
 		}
 	}
 }
