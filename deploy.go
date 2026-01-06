@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -16,9 +17,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 type output interface {
@@ -48,8 +49,11 @@ func main() {
 	localFolder := os.Args[1]
 	var remote output
 	if bucket := os.Getenv("S3_BUCKET"); bucket != "" {
-		sess := session.New()
-		s3Client := s3.New(sess, nil)
+		cfg, err := config.LoadDefaultConfig(context.TODO())
+		if err != nil {
+			log.Fatal(err)
+		}
+		s3Client := s3.NewFromConfig(cfg)
 		remote = &S3Output{s3Client, bucket, "", os.Getenv("S3_ACL")}
 	} else if netstorageHost := os.Getenv("NETSTORAGE_HOST"); netstorageHost != "" {
 		remote = &NetstorageOutput{
@@ -173,7 +177,7 @@ func (o *NetstorageOutput) Delete(key string) error {
 // An s3Output implements Output to a provided s3 bucket with the provided
 // prefix.
 type S3Output struct {
-	Client *s3.S3
+	Client *s3.Client
 	Bucket string
 	Prefix string
 	ACL    string
@@ -190,15 +194,15 @@ func (o *S3Output) URLFor(p string) string {
 func (o *S3Output) PutReader(key string, r io.ReadSeeker, contentType string) error {
 	filename := path.Join(o.Prefix, key)
 	in := &s3.PutObjectInput{
-		Bucket:      aws.String(o.Bucket),
-		Key:         aws.String(filename),
+		Bucket:      &o.Bucket,
+		Key:         &filename,
 		Body:        r,
-		ContentType: aws.String(contentType),
+		ContentType: &contentType,
 	}
 	if o.ACL != "" {
-		in.ACL = aws.String(o.ACL)
+		in.ACL = types.ObjectCannedACL(o.ACL)
 	}
-	if _, err := o.Client.PutObject(in); err != nil {
+	if _, err := o.Client.PutObject(context.TODO(), in); err != nil {
 		return err
 	}
 	log.Printf("output: put %s", filename)
@@ -207,9 +211,9 @@ func (o *S3Output) PutReader(key string, r io.ReadSeeker, contentType string) er
 
 func (o *S3Output) Delete(key string) error {
 	filename := path.Join(o.Prefix, key)
-	if _, err := o.Client.DeleteObject(&s3.DeleteObjectInput{
-		Bucket: aws.String(o.Bucket),
-		Key:    aws.String(filename),
+	if _, err := o.Client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		Bucket: &o.Bucket,
+		Key:    &filename,
 	}); err != nil {
 		return err
 	}
